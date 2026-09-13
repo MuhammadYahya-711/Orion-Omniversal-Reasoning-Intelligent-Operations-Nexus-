@@ -1,0 +1,2400 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="description" content="ORION is an intelligent operations workspace that turns conversations into research, plans, projects, and action.">
+    <title>ORION — Intelligent Operations Workspace</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&amp;family=Space+Grotesk:wght@400;500;600;700&amp;display=swap" rel="stylesheet"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;600;700&amp;display=swap"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&amp;display=swap">
+    <!-- GenMB Capabilities START -->
+    <script>
+// GenMB auth SDK (Capability)
+(function() {
+class GenMBGoogleAuth {
+  constructor({ appId, baseUrl, onError }) {
+    if (!appId) {
+      throw new Error('GenMBGoogleAuth: appId is required')
+    }
+
+    this.appId = appId
+    this.baseUrl = (baseUrl || '/api/auth/google').replace(/\/$/, '')
+    this.user = null
+    this.listeners = []
+    this.onError = onError || console.error
+    this._ready = false
+    this._readyPromise = null
+    this._refreshTimer = null
+  }
+
+  async ready() {
+    if (this._ready) return this
+    if (this._readyPromise) return this._readyPromise
+
+    var self = this
+    this._readyPromise = this.checkSession().then(function () {
+      if (!self.user) {
+        var params = new URLSearchParams(window.location.search)
+        var magicToken = params.get('magic_token')
+        if (magicToken) {
+          return self.verifyMagicLink(magicToken).catch(function () {
+          }).then(function () {
+            params.delete('magic_token')
+            var cleanUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash
+            window.history.replaceState({}, '', cleanUrl)
+          })
+        }
+      }
+    }).then(function () {
+      self._ready = true
+      return self
+    })
+    return this._readyPromise
+  }
+
+  async signIn() {
+    return new Promise((resolve, reject) => {
+      let settled = false
+
+      var width = 500
+      var height = 600
+      var left = window.screenX + (window.outerWidth - width) / 2
+      var top = window.screenY + (window.outerHeight - height) / 2
+
+      var navBase = this.baseUrl
+      var extraOrigin = ''
+      var host = window.location.hostname || ''
+      if (/^preview-\d+-/.test(host) && host.slice(-10) === '.genmb.com') {
+        navBase = 'https://' + host.split('.').slice(-2).join('.') + '/api/auth/google'
+        extraOrigin = '&origin=' + encodeURIComponent(window.location.origin)
+      }
+
+      var popup = window.open(
+        navBase + '/authorize?app_id=' + encodeURIComponent(this.appId) + '&redirect=popup' + extraOrigin,
+        'genmb-google-signin',
+        'width=' + width + ',height=' + height + ',left=' + left + ',top=' + top + ',popup=1'
+      )
+
+      if (!popup || popup.closed) {
+        window.location.href = navBase + '/authorize?app_id=' + encodeURIComponent(this.appId) + '&redirect=' + encodeURIComponent(window.location.href) + extraOrigin
+        resolve(null)
+        return
+      }
+
+      var pollSession = null
+
+      var cleanup = function () {
+        clearTimeout(timeout)
+        clearInterval(checkClosed)
+        if (pollSession) clearInterval(pollSession)
+        window.removeEventListener('message', handleMessage)
+      }
+
+      var self = this
+
+      var finishWithUser = function (user) {
+        if (settled) return
+        settled = true
+        cleanup()
+        try { popup.close() } catch (e) { }
+        resolve(user)
+      }
+
+      var timeout = setTimeout(function () {
+        if (settled) return
+        settled = true
+        cleanup()
+        try { popup.close() } catch (e) { }
+        var error = new Error("Sign-in took too long. Please try again.")
+        error.code = 'SIGN_IN_TIMEOUT'
+        self.onError(error)
+        reject(error)
+      }, 120000)
+
+      var handleMessage = function (event) {
+        var origin = event.origin
+        var isGenmb = origin === 'https://genmb.com' || origin.endsWith('.genmb.com')
+        var isLocalhost = origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')
+        if (!isGenmb && !isLocalhost) return
+        if (settled) return
+
+        if (event.data && event.data.error) {
+          settled = true
+          cleanup()
+          var error = new Error(event.data.error)
+          error.code = 'SIGN_IN_FAILED'
+          self.onError(error)
+          reject(error)
+        } else if (event.data && event.data.user) {
+          self.user = event.data.user
+          self._notifyListeners()
+          self._startRefreshTimer()
+          finishWithUser(self.user)
+        }
+      }
+
+      var checkingSession = false
+      var pollStartedAt = Date.now()
+      var pollTick = function () {
+        if (settled || checkingSession) return
+        checkingSession = true
+        self.checkSession().then(function (user) {
+          checkingSession = false
+          if (user && !settled) finishWithUser(user)
+        }).catch(function () { checkingSession = false })
+      }
+      pollSession = setInterval(function () {
+        pollTick()
+        if (!settled && pollSession && Date.now() - pollStartedAt >= 30000) {
+          clearInterval(pollSession)
+          pollSession = setInterval(pollTick, 5000)
+        }
+      }, 1500)
+
+      var checkClosed = setInterval(function () {
+        var closed = false
+        try { closed = popup.closed } catch (e) { closed = false }
+        if (!closed || settled) return
+        self.checkSession().then(function (user) {
+          if (settled) return
+          if (user) finishWithUser(user)
+          else { settled = true; cleanup(); resolve(null) }
+        }).catch(function () {
+          if (settled) return
+          settled = true; cleanup(); resolve(null)
+        })
+      }, 500)
+
+      window.addEventListener('message', handleMessage)
+    })
+  }
+
+  async sendMagicLink(email) {
+    try {
+      var res = await fetch('/api/auth/email/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, app_id: this.appId }),
+        credentials: 'include'
+      })
+      return await res.json()
+    } catch (err) {
+      var error = new Error("We couldn't send the sign-in link. Check your connection and try again.")
+      error.code = 'NETWORK_ERROR'
+      this.onError(error)
+      throw error
+    }
+  }
+
+  async verifyMagicLink(token) {
+    try {
+      var res = await fetch(
+        '/api/auth/email/verify?token=' + encodeURIComponent(token) + '&app_id=' + encodeURIComponent(this.appId),
+        { credentials: 'include' }
+      )
+      if (!res.ok) {
+        var error = new Error("This sign-in link has expired or already been used. Send yourself a new one.")
+        error.code = 'VERIFY_FAILED'
+        this.onError(error)
+        return null
+      }
+      var data = await res.json()
+      if (data.success && data.user) {
+        this.user = data.user
+        this._notifyListeners()
+        this._startRefreshTimer()
+      }
+      return this.user
+    } catch (err) {
+      var error = new Error("We couldn't sign you in. Check your connection and try again.")
+      error.code = 'NETWORK_ERROR'
+      this.onError(error)
+      return null
+    }
+  }
+
+  async signUp(email, password, name) {
+    try {
+      var res = await fetch('/api/auth/password/signup-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, password: password, name: name || null, app_id: this.appId }),
+        credentials: 'include',
+      })
+      var data = await res.json()
+      if (!data.success) {
+        var err = new Error(data.error || 'Sign-up failed')
+        err.code = 'SIGNUP_FAILED'
+        this.onError(err)
+        throw err
+      }
+      return data
+    } catch (err) {
+      if (err && err.code) throw err
+      var nerr = new Error("We couldn't reach the server. Check your connection and try again.")
+      nerr.code = 'NETWORK_ERROR'
+      this.onError(nerr)
+      throw nerr
+    }
+  }
+
+  async verifySignUp(email, code) {
+    try {
+      var res = await fetch('/api/auth/password/signup-verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, code: code, app_id: this.appId }),
+        credentials: 'include',
+      })
+      var data = await res.json()
+      if (!data.success || !data.user) {
+        var err = new Error(data.error || 'Verification failed')
+        err.code = 'SIGNUP_FAILED'
+        this.onError(err)
+        throw err
+      }
+      this.user = data.user
+      this._notifyListeners()
+      this._startRefreshTimer()
+      return this.user
+    } catch (err) {
+      if (err && err.code) throw err
+      var nerr = new Error("We couldn't reach the server. Check your connection and try again.")
+      nerr.code = 'NETWORK_ERROR'
+      this.onError(nerr)
+      throw nerr
+    }
+  }
+
+  async signInWithPassword(email, password) {
+    try {
+      var res = await fetch('/api/auth/password/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, password: password, app_id: this.appId }),
+        credentials: 'include',
+      })
+      var data = await res.json()
+      if (!data.success || !data.user) {
+        var err = new Error(data.error || 'Invalid email or password')
+        err.code = 'LOGIN_FAILED'
+        this.onError(err)
+        throw err
+      }
+      this.user = data.user
+      this._notifyListeners()
+      this._startRefreshTimer()
+      return this.user
+    } catch (err) {
+      if (err && err.code) throw err
+      var nerr = new Error("We couldn't reach the server. Check your connection and try again.")
+      nerr.code = 'NETWORK_ERROR'
+      this.onError(nerr)
+      throw nerr
+    }
+  }
+
+  async requestPasswordReset(email) {
+    try {
+      var res = await fetch('/api/auth/password/reset-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, app_id: this.appId }),
+        credentials: 'include',
+      })
+      return await res.json()
+    } catch (err) {
+      var nerr = new Error("We couldn't reach the server. Check your connection and try again.")
+      nerr.code = 'NETWORK_ERROR'
+      this.onError(nerr)
+      throw nerr
+    }
+  }
+
+  async confirmPasswordReset(email, code, newPassword) {
+    try {
+      var res = await fetch('/api/auth/password/reset-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, code: code, newPassword: newPassword, app_id: this.appId }),
+        credentials: 'include',
+      })
+      var data = await res.json()
+      if (!data.success) {
+        var err = new Error(data.error || 'Password reset failed')
+        err.code = 'RESET_FAILED'
+        this.onError(err)
+        throw err
+      }
+      return data
+    } catch (err) {
+      if (err && err.code) throw err
+      var nerr = new Error("We couldn't reach the server. Check your connection and try again.")
+      nerr.code = 'NETWORK_ERROR'
+      this.onError(nerr)
+      throw nerr
+    }
+  }
+
+  async signOut() {
+    this._stopRefreshTimer()
+
+    try {
+      await fetch(this.baseUrl + '/signout?app_id=' + encodeURIComponent(this.appId), {
+        method: 'POST',
+        credentials: 'include'
+      })
+    } catch (err) {
+      err.code = 'NETWORK_ERROR'
+      this.onError(err)
+    }
+
+    this.user = null
+    this._notifyListeners()
+  }
+
+  async checkSession() {
+    try {
+      var res = await fetch(this.baseUrl + '/session?app_id=' + encodeURIComponent(this.appId), {
+        credentials: 'include'
+      })
+
+      if (res.ok) {
+        this.user = (await res.json()) || null
+        this._notifyListeners()
+        if (!this.user) {
+          this._stopRefreshTimer()
+          return null
+        }
+        this._startRefreshTimer()
+        this._refreshSession()
+        return this.user
+      }
+      this._stopRefreshTimer()
+      return null
+    } catch (err) {
+      err.code = 'NETWORK_ERROR'
+      this.onError(err)
+      return null
+    }
+  }
+
+  getUser() {
+    return this.user
+  }
+
+  isAuthenticated() {
+    return this.user !== null
+  }
+
+  onAuthStateChange(callback) {
+    this.listeners.push(callback)
+    callback(this.user)
+    var self = this
+    return function () {
+      self.listeners = self.listeners.filter(function (l) { return l !== callback })
+    }
+  }
+
+  _refreshSession() {
+    fetch(this.baseUrl + '/refresh?app_id=' + encodeURIComponent(this.appId), {
+      method: 'POST',
+      credentials: 'include'
+    }).catch(function () {
+    })
+  }
+
+  _startRefreshTimer() {
+    this._stopRefreshTimer()
+    var self = this
+    this._refreshTimer = setInterval(function () {
+      if (self.user) {
+        self._refreshSession()
+      }
+    }, 30 * 60 * 1000)
+  }
+
+  _stopRefreshTimer() {
+    if (this._refreshTimer) {
+      clearInterval(this._refreshTimer)
+      this._refreshTimer = null
+    }
+  }
+
+  _notifyListeners() {
+    var self = this
+    this.listeners.forEach(function (listener) {
+      try {
+        listener(self.user)
+      } catch (err) {
+        console.error('Error in auth state listener:', err)
+      }
+    })
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.GenMBGoogleAuth = GenMBGoogleAuth;
+}
+
+
+// Auto-initialize
+window.genmb = window.genmb || {};
+const config = {
+  "appId": "yA5ttgjUkVzs",
+  "baseUrl": "/api/auth/google"
+};
+window.genmb.auth = new GenMBGoogleAuth(config);
+window.genmb.auth.ready();
+})();
+</script>
+    <script>
+// GenMB vector-db SDK (Capability)
+(function() {
+class GenMBVectorDB {
+  constructor({ appId, baseUrl }) {
+    if (!appId) {
+      throw new Error('GenMBVectorDB: appId is required')
+    }
+    this.appId = appId
+    this.baseUrl = (baseUrl || '').replace(/\/$/, '')
+    if (!this.baseUrl) {
+      this.baseUrl = window.location.origin
+    }
+    this._endpoint = this.baseUrl + '/api/services/' + this.appId + '/vector-db'
+    this._timeout = 60000
+  }
+
+  async ingest(text, metadata) {
+    if (!text || typeof text !== 'string') {
+      throw new Error('ingest() requires a non-empty text string')
+    }
+
+    var title = metadata && metadata.title ? metadata.title : undefined
+    var meta = metadata ? Object.assign({}, metadata) : {}
+    if (meta.title) delete meta.title
+
+    var response = await this._fetch(this._endpoint + '/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text, metadata: meta, title: title }),
+    })
+
+    return response.data
+  }
+
+  async ingestFile(file, metadata) {
+    if (!file || !(file instanceof File || (file.name && file.size))) {
+      throw new Error('ingestFile() requires a File object')
+    }
+
+    var formData = new FormData()
+    formData.append('file', file)
+    if (metadata) {
+      formData.append('metadata', JSON.stringify(metadata))
+    }
+
+    var response = await this._fetch(this._endpoint + '/ingest-file', {
+      method: 'POST',
+      body: formData,
+    })
+
+    return response.data
+  }
+
+  async search(query, options) {
+    if (!query || typeof query !== 'string') {
+      throw new Error('search() requires a non-empty query string')
+    }
+
+    var body = { query: query }
+    if (options && options.limit != null) body.limit = options.limit
+    if (options && options.filter) body.filter = options.filter
+
+    var response = await this._fetch(this._endpoint + '/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+    return response.data
+  }
+
+  async delete(documentId) {
+    if (!documentId) {
+      throw new Error('delete() requires a documentId')
+    }
+
+    var response = await this._fetch(this._endpoint + '/documents/' + documentId, {
+      method: 'DELETE',
+    })
+
+    return response.data || { success: response.success }
+  }
+
+  async list(options) {
+    var params = new URLSearchParams()
+    if (options && options.limit != null) params.set('limit', String(options.limit))
+    if (options && options.offset != null) params.set('offset', String(options.offset))
+
+    var url = this._endpoint + '/documents'
+    var qs = params.toString()
+    if (qs) url += '?' + qs
+
+    var response = await this._fetch(url, { method: 'GET' })
+    return response.data
+  }
+
+  async _fetch(url, options) {
+    var controller = new AbortController()
+    var timer = setTimeout(function () { controller.abort() }, this._timeout)
+
+    try {
+      var response = await fetch(url, Object.assign({}, options, { signal: controller.signal }))
+      clearTimeout(timer)
+
+      var data = await response.json()
+
+      if (!response.ok || !data.success) {
+        var err = new Error(data.error || data.detail || 'Vector DB request failed (status ' + response.status + ')')
+        err.code = data.error_code
+        err.status = response.status
+        throw err
+      }
+
+      return data
+    } catch (err) {
+      clearTimeout(timer)
+      if (err.name === 'AbortError') {
+        throw new Error('Vector DB request timed out')
+      }
+      throw err
+    }
+  }
+}
+
+
+// Auto-initialize
+window.genmb = window.genmb || {};
+const config = {
+  "appId": "yA5ttgjUkVzs"
+};
+window.genmb.vectordb = new GenMBVectorDB(config);
+})();
+</script>
+    <script>
+// GenMB kv SDK (Capability)
+(function() {
+function _friendlyMsg(s) {
+  if (!s) return 'Something went wrong. Please try again.'
+  var t = String(s)
+  if (/too large|exceeds|payload too|value too/i.test(t)) return 'That is too big to save. Please use a smaller value.'
+  if (/too many|quota|limit reached|max keys/i.test(t)) return 'This app has reached its storage limit.'
+  if (/being set up|setting up/i.test(t)) return 'Setting things up. Please try again in a moment.'
+  if (/not a number|not numeric|cannot increment/i.test(t)) return "That value can't be counted. Please reset it first."
+  if (/request failed \(http\s*\d+\)/i.test(t) || /\bhttp\s+\d{3}\b/i.test(t)) {
+    return "Couldn't reach saved data. Please try again in a moment."
+  }
+  return t
+}
+
+function _kvError(raw, status) {
+  var err = new Error(_friendlyMsg(raw))
+  err.detail = raw ? String(raw) : err.message
+  if (status) err.status = status
+  if (typeof console !== 'undefined' && console.warn) {
+    console.warn('[genmb.kv] ' + err.detail)
+  }
+  return err
+}
+
+class GenMBKeyValueStore {
+  constructor(config) {
+    if (!config.appId) {
+      throw new Error('GenMBKeyValueStore: appId is required')
+    }
+    this._base = (config.baseUrl || '/api/kv') + '/' + config.appId
+  }
+
+  get(key) {
+    return this._request('GET', this._base + '/' + encodeURIComponent(key), null, true).then(function (d) {
+      return d == null ? null : d.value
+    })
+  }
+
+  set(key, value) {
+    return this._request('POST', this._base, { key: key, value: value })
+  }
+
+  delete(key) {
+    return this._request('DELETE', this._base + '/' + encodeURIComponent(key))
+  }
+
+  list(prefix) {
+    var qs = ''
+    var parts = []
+    if (prefix) parts.push('prefix=' + encodeURIComponent(prefix))
+    parts.push('limit=1000')
+    qs = '?' + parts.join('&')
+    return this._request('GET', this._base + qs)
+  }
+
+  increment(key, by) {
+    if (by === undefined) by = 1
+    return this._request('POST', this._base + '/' + encodeURIComponent(key) + '/increment', { by: by }).then(function (d) {
+      return d.value
+    })
+  }
+
+  async _request(method, url, body, nullOn404) {
+    var attempt = 0
+    var provisionAttempt = 0
+    while (true) {
+      var controller = new AbortController()
+      var timer = setTimeout(function () { controller.abort() }, 30000)
+      try {
+        var options = {
+          method: method,
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal
+        }
+        if (body) {
+          options.body = JSON.stringify(body)
+        }
+        var res = await fetch(url, options)
+        clearTimeout(timer)
+        if (!res.ok) {
+          if (res.status === 404 && nullOn404) {
+            return null
+          }
+          if (res.status >= 500 && attempt < 2) {
+            attempt++
+            await new Promise(function (r) { setTimeout(r, 300 * attempt) })
+            continue
+          }
+          var errBody = null
+          try { errBody = await res.json() } catch (_) {}
+          var raw = (errBody && (errBody.error || errBody.detail)) || ('Request failed (HTTP ' + res.status + ')')
+          if (/being set up|setting up/i.test(raw) && provisionAttempt < 6) {
+            provisionAttempt++
+            await new Promise(function (r) { setTimeout(r, Math.min(3000, 800 * provisionAttempt)) })
+            continue
+          }
+          throw _kvError(raw, res.status)
+        }
+        var result = await res.json()
+        if (!result.success) {
+          throw _kvError(result.error, res.status)
+        }
+        return result.data
+      } catch (err) {
+        clearTimeout(timer)
+        if (err.name === 'AbortError') {
+          if (attempt < 2) {
+            attempt++
+            await new Promise(function (r) { setTimeout(r, 300 * attempt) })
+            continue
+          }
+          throw new Error('The store took too long to respond. Please try again.')
+        }
+        throw err
+      }
+    }
+  }
+}
+
+
+// Auto-initialize
+window.genmb = window.genmb || {};
+const config = {
+  "appId": "yA5ttgjUkVzs",
+  "baseUrl": "/api/kv"
+};
+window.genmb.kv = new GenMBKeyValueStore(config);
+})();
+</script>
+    <script>
+// GenMB search SDK (Capability)
+(function() {
+class GenMBSearch {
+  constructor({ appId, baseUrl } = {}) {
+    if (!appId) throw new Error('GenMBSearch: appId is required')
+    this.appId = appId
+    this.baseUrl = ((baseUrl || '/api/search').replace(/\/$/, '')) + '/' + appId
+  }
+
+  async ready() { return this }
+
+  async web(query, options = {}) { return this._search('/web', query, options) }
+
+  async news(query, options = {}) { return this._search('/news', query, options) }
+
+  async _search(path, query, options = {}) {
+    if (!query || typeof query !== 'string') {
+      throw new Error('search query is required (string)')
+    }
+    const numResults = Math.max(1, Math.min(options.numResults || options.count || 6, 10))
+
+    const res = await fetch(this.baseUrl + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ query: query.slice(0, 500), numResults }),
+    })
+
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok || json.success === false) {
+      throw Object.assign(
+        new Error(json.error || json.detail || `search failed (${res.status})`),
+        { code: json.error_code || json.code },
+      )
+    }
+
+    const data = json.data !== undefined ? json.data : json
+    const results = Array.isArray(data.results) ? data.results : []
+
+    return results.map((r) => {
+      let host = r.host || ''
+      if (!host) {
+        try { host = new URL(r.url).hostname.replace(/^www\./, '') } catch (e) { host = '' }
+      }
+      const favicon = host ? `https://www.google.com/s2/favicons?domain=${host}&sz=128` : ''
+      return {
+        ...r,
+        host,
+        favicon,
+        image: r.imageUrl || favicon,
+      }
+    })
+  }
+}
+
+window.GenMBSearch = GenMBSearch
+
+
+// Auto-initialize
+window.genmb = window.genmb || {};
+const config = {
+  "appId": "yA5ttgjUkVzs",
+  "baseUrl": "/api/search"
+};
+window.genmb.search = new GenMBSearch(config);
+window.genmb.search.ready();
+})();
+</script>
+    <script>
+// GenMB file-storage SDK (Capability)
+(function() {
+var CHUNK_SIZE = 8 * 1024 * 1024
+var RESUMABLE_THRESHOLD = 8 * 1024 * 1024
+var CHUNK_RETRIES = 3
+
+class GenMBFileStorage {
+  constructor({ appId, baseUrl }) {
+    if (!appId) {
+      throw new Error('GenMBFileStorage: appId is required')
+    }
+    this.appId = appId
+    this.baseUrl = (baseUrl || '').replace(/\/$/, '')
+    if (!this.baseUrl) {
+      this.baseUrl = window.location.origin
+    }
+    this._endpoint = this.baseUrl + '/api/storage/' + this.appId
+    this._timeout = 60000
+    this._maxRetries = 2
+  }
+
+  async upload(file, options) {
+    if (!file || !(file instanceof File || (file.name && file.size))) {
+      throw new Error('upload() requires a File object')
+    }
+    options = options || {}
+
+    if (file.size > RESUMABLE_THRESHOLD) {
+      return this._uploadResumable(file, options)
+    }
+    return this._uploadSmall(file, options)
+  }
+
+  async _uploadSmall(file, options) {
+    var formData = new FormData()
+    formData.append('file', file)
+    if (options.folder) formData.append('folder', options.folder)
+
+    var url = this._endpoint + '/upload'
+    var lastError
+
+    for (var attempt = 0; attempt <= this._maxRetries; attempt++) {
+      if (options.signal && options.signal.aborted) {
+        var preAbort = new Error('Upload aborted')
+        preAbort.name = 'AbortError'
+        throw preAbort
+      }
+
+      var timer = null
+      var controller = new AbortController()
+      var onAbort = function () { controller.abort() }
+      try {
+        timer = setTimeout(function () { controller.abort() }, this._timeout)
+        if (options.signal) {
+          options.signal.addEventListener('abort', onAbort)
+        }
+
+        if (options.onProgress) options.onProgress(0)
+
+        var res = await fetch(url, {
+          method: 'POST',
+          body: formData,
+          signal: controller.signal,
+        })
+        clearTimeout(timer)
+        if (options.signal) options.signal.removeEventListener('abort', onAbort)
+
+        if (res.status >= 400 && res.status < 500) {
+          var errData = await res.json().catch(function () { return {} })
+          throw new Error(errData.error || 'Upload failed: HTTP ' + res.status)
+        }
+
+        if (res.status >= 500) {
+          lastError = new Error('Server error: HTTP ' + res.status)
+          if (attempt < this._maxRetries) {
+            await new Promise(function (r) { setTimeout(r, 1000 * (attempt + 1)) })
+            continue
+          }
+          throw lastError
+        }
+
+        var data = await res.json()
+        if (!data.success) {
+          throw new Error(data.error || 'Upload failed')
+        }
+        if (options.onProgress) options.onProgress(100)
+        return data.data.asset
+      } catch (err) {
+        if (timer) clearTimeout(timer)
+        if (options.signal) options.signal.removeEventListener('abort', onAbort)
+        lastError = err
+        if (err.name === 'AbortError' && options.signal && options.signal.aborted) {
+          throw err
+        }
+        if (err.name === 'AbortError') {
+          lastError = new Error('Upload timed out')
+        }
+        if (attempt < this._maxRetries && (err.name === 'AbortError' || err.name === 'TypeError')) {
+          await new Promise(function (r) { setTimeout(r, 1000 * (attempt + 1)) })
+          continue
+        }
+        throw lastError
+      }
+    }
+    throw lastError
+  }
+
+  async _uploadResumable(file, options) {
+    var startRes = await fetch(this._endpoint + '/upload/resumable/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename: file.name,
+        contentType: file.type || 'application/octet-stream',
+        totalSize: file.size,
+        folder: options.folder || null,
+      }),
+      signal: options.signal,
+    })
+    if (!startRes.ok) {
+      var startErr = await startRes.json().catch(function () { return {} })
+      throw new Error(startErr.error || 'Failed to start resumable upload')
+    }
+    var startData = await startRes.json()
+    if (!startData.success) {
+      throw new Error(startData.error || 'Failed to start resumable upload')
+    }
+    var sessionId = startData.data.sessionId
+    var uploadUrl = startData.data.uploadUrl
+
+    var totalSize = file.size
+    var uploaded = 0
+    if (options.onProgress) options.onProgress(0)
+
+    for (var offset = 0; offset < totalSize; offset += CHUNK_SIZE) {
+      var end = Math.min(offset + CHUNK_SIZE, totalSize)
+      var chunk = file.slice(offset, end)
+      var contentRange = 'bytes ' + offset + '-' + (end - 1) + '/' + totalSize
+
+      var attempt = 0
+      var chunkErr = null
+      while (attempt < CHUNK_RETRIES) {
+        try {
+          var putRes = await fetch(uploadUrl, {
+            method: 'PUT',
+            body: chunk,
+            headers: { 'Content-Range': contentRange },
+            signal: options.signal,
+          })
+          if (putRes.status === 200 || putRes.status === 201 || putRes.status === 308) {
+            uploaded = end
+            chunkErr = null
+            break
+          }
+          if (putRes.status >= 500 && attempt < CHUNK_RETRIES - 1) {
+            chunkErr = new Error('Chunk PUT failed: HTTP ' + putRes.status)
+            attempt += 1
+            await new Promise(function (r) { setTimeout(r, 500 * Math.pow(2, attempt)) })
+            continue
+          }
+          chunkErr = new Error('Chunk PUT failed: HTTP ' + putRes.status)
+          break
+        } catch (err) {
+          if (err.name === 'AbortError') throw err
+          chunkErr = err
+          if (attempt < CHUNK_RETRIES - 1) {
+            attempt += 1
+            await new Promise(function (r) { setTimeout(r, 500 * Math.pow(2, attempt)) })
+            continue
+          }
+          break
+        }
+      }
+      if (chunkErr) throw chunkErr
+
+      if (options.onProgress) {
+        options.onProgress(Math.floor((uploaded / totalSize) * 99))
+      }
+    }
+
+    var finRes = await fetch(this._endpoint + '/upload/resumable/' + sessionId + '/finalize', {
+      method: 'POST',
+      signal: options.signal,
+    })
+    if (!finRes.ok) {
+      var finErr = await finRes.json().catch(function () { return {} })
+      throw new Error(finErr.error || 'Failed to finalize upload')
+    }
+    var finData = await finRes.json()
+    if (!finData.success) {
+      throw new Error(finData.error || 'Failed to finalize upload')
+    }
+    if (options.onProgress) options.onProgress(100)
+    return finData.data.asset
+  }
+
+  async list(options) {
+    var url = this._endpoint + '/files'
+    if (options && options.folder) {
+      url += '?folder=' + encodeURIComponent(options.folder)
+    }
+    var data = await this._fetch(url, 'GET')
+    return { files: data.assets || [], usage: data.usage || {} }
+  }
+
+  async delete(filename) {
+    if (!filename) throw new Error('delete() requires a filename')
+    var url = this._endpoint + '/files/' + encodeURIComponent(filename)
+    await this._fetch(url, 'DELETE')
+    return { success: true }
+  }
+
+  getUrl(filename) {
+    return this._endpoint + '/files/' + encodeURIComponent(filename)
+  }
+
+  async getSignedUrl(filename, ttlSeconds) {
+    if (!filename) throw new Error('getSignedUrl() requires a filename')
+    var ttl = ttlSeconds || 3600
+    var url = this._endpoint + '/sign-view/' + encodeURIComponent(filename) +
+      '?ttl=' + encodeURIComponent(ttl)
+    var data = await this._fetch(url, 'POST')
+    return { url: data.url, expiresInSeconds: data.expiresInSeconds }
+  }
+
+  async getLimits() {
+    if (this._limitsCache) return this._limitsCache
+    if (this._limitsPromise) return this._limitsPromise
+    var self = this
+    this._limitsPromise = this._fetch(this._endpoint + '/usage', 'GET')
+      .then(function (data) {
+        var limits = (data && data.limits) || {}
+        self._limitsCache = limits
+        return limits
+      })
+      .catch(function () {
+        self._limitsPromise = null
+        return {}
+      })
+    return this._limitsPromise
+  }
+
+  validate(file, options) {
+    options = options || {}
+    if (!file || (typeof file.size !== 'number' && !(file instanceof File))) {
+      return { ok: false, reason: 'type', message: 'Not a valid file' }
+    }
+    var accept = options.accept
+    if (accept && accept !== '*/*' && !GenMBFileStorage._acceptMatches(accept, file)) {
+      return { ok: false, reason: 'type', message: GenMBFileStorage._acceptHint(accept) }
+    }
+    if (typeof options.maxSize === 'number' && options.maxSize > 0 && file.size > options.maxSize) {
+      return {
+        ok: false,
+        reason: 'size',
+        message: 'File is too large (max ' + GenMBFileStorage._formatSize(options.maxSize) + ')',
+      }
+    }
+    return { ok: true }
+  }
+
+  previewFor(file) {
+    var type = (file && file.type) || ''
+    var name = (file && file.name) || ''
+    var size = (file && typeof file.size === 'number') ? file.size : 0
+    var kind = 'file'
+    if (type.indexOf('image/') === 0) kind = 'image'
+    else if (type.indexOf('video/') === 0) kind = 'video'
+    else if (type === 'application/pdf' || /\.pdf$/i.test(name)) kind = 'pdf'
+
+    var url = null
+    if ((kind === 'image' || kind === 'video') && typeof URL !== 'undefined' && URL.createObjectURL) {
+      try { url = URL.createObjectURL(file) } catch (e) { url = null }
+    }
+    var revoked = false
+    return {
+      kind: kind,
+      url: url,
+      name: name,
+      size: size,
+      contentType: type,
+      revoke: function () {
+        if (revoked) return
+        revoked = true
+        if (url && typeof URL !== 'undefined' && URL.revokeObjectURL) {
+          try { URL.revokeObjectURL(url) } catch (e) { }
+        }
+      },
+    }
+  }
+
+  static _acceptMatches(accept, file) {
+    var tokens = String(accept).split(',').map(function (t) { return t.trim().toLowerCase() }).filter(Boolean)
+    if (!tokens.length) return true
+    var type = (file.type || '').toLowerCase()
+    var name = (file.name || '').toLowerCase()
+    for (var i = 0; i < tokens.length; i++) {
+      var tok = tokens[i]
+      if (tok === '*/*') return true
+      if (tok.charAt(0) === '.') {
+        if (name.length >= tok.length && name.slice(-tok.length) === tok) return true
+        continue
+      }
+      var star = tok.indexOf('/*')
+      if (star !== -1) {
+        var prefix = tok.slice(0, star + 1)
+        if (type.indexOf(prefix) === 0) return true
+        continue
+      }
+      if (type && type === tok) return true
+    }
+    return false
+  }
+
+  static _acceptHint(accept) {
+    var tokens = String(accept).split(',').map(function (t) { return t.trim() }).filter(Boolean)
+    var labels = tokens.map(function (t) {
+      var lt = t.toLowerCase()
+      if (lt === 'image/*') return 'images'
+      if (lt === 'video/*') return 'videos'
+      if (lt === 'audio/*') return 'audio'
+      if (lt === 'application/pdf') return 'PDF'
+      if (lt.charAt(0) === '.') return lt.slice(1).toUpperCase()
+      if (lt.indexOf('/') !== -1) return lt.split('/')[1].toUpperCase()
+      return t
+    })
+    return 'Only ' + labels.join(', ') + ' allowed'
+  }
+
+  static _formatSize(b) {
+    if (b < 1024) return b + ' B'
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB'
+    if (b < 1024 * 1024 * 1024) return (b / 1024 / 1024).toFixed(1) + ' MB'
+    return (b / 1024 / 1024 / 1024).toFixed(2) + ' GB'
+  }
+
+  async _fetch(url, method) {
+    var lastError
+    for (var attempt = 0; attempt <= this._maxRetries; attempt++) {
+      var timer = null
+      try {
+        var controller = new AbortController()
+        timer = setTimeout(function () { controller.abort() }, 30000)
+
+        var res = await fetch(url, { method: method, signal: controller.signal })
+        clearTimeout(timer)
+
+        if (res.status >= 400 && res.status < 500) {
+          var errData = await res.json().catch(function () { return {} })
+          throw new Error(errData.error || 'Request failed: HTTP ' + res.status)
+        }
+
+        if (res.status >= 500) {
+          lastError = new Error('Server error: HTTP ' + res.status)
+          if (attempt < this._maxRetries) {
+            await new Promise(function (r) { setTimeout(r, 1000 * (attempt + 1)) })
+            continue
+          }
+          throw lastError
+        }
+
+        var data = await res.json()
+        if (!data.success) {
+          throw new Error(data.error || 'Request failed')
+        }
+        return data.data
+      } catch (err) {
+        if (timer) clearTimeout(timer)
+        lastError = err
+        if (err.name === 'AbortError') {
+          lastError = new Error('Request timed out')
+        }
+        if (attempt < this._maxRetries && (err.name === 'AbortError' || err.name === 'TypeError')) {
+          await new Promise(function (r) { setTimeout(r, 1000 * (attempt + 1)) })
+          continue
+        }
+        throw lastError
+      }
+    }
+    throw lastError
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.GenMBFileStorage = GenMBFileStorage
+}
+
+
+// Auto-initialize
+window.genmb = window.genmb || {};
+const config = {
+  "appId": "yA5ttgjUkVzs"
+};
+window.genmb.storage = new GenMBFileStorage(config);
+
+// Widgets
+;(function () {
+  if (typeof window === 'undefined') return
+  if (window.customElements && window.customElements.get('genmb-uploader')) return
+
+  var CSS = '\n' +
+    ':host { display: block; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }\n' +
+    '.dropzone { position: relative; border: 2px dashed var(--genmb-border, #cbd5e1); border-radius: 12px; padding: 32px 20px; text-align: center; cursor: pointer; transition: border-color .15s, background-color .15s; background: var(--genmb-bg, #ffffff); color: var(--genmb-fg, #0f172a); }\n' +
+    '.dropzone:hover { border-color: var(--genmb-accent, #6366f1); }\n' +
+    '.dropzone.dragover { border-color: var(--genmb-accent, #6366f1); background: var(--genmb-bg-hover, #eef2ff); }\n' +
+    '.dropzone:focus-within { border-color: var(--genmb-accent, #6366f1); outline: 2px solid var(--genmb-accent, #6366f1); outline-offset: 2px; }\n' +
+    '.icon { font-size: 32px; line-height: 1; margin-bottom: 8px; opacity: .85; }\n' +
+    '.label { font-size: 14px; font-weight: 500; margin: 0; }\n' +
+    '.hint { font-size: 12px; opacity: .65; margin-top: 6px; }\n' +
+    'input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }\n' +
+    '.list { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; text-align: left; }\n' +
+    '.summary { margin-top: 10px; font-size: 12px; opacity: .75; text-align: left; }\n' +
+    '.item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; background: var(--genmb-bg-2, #f8fafc); font-size: 13px; }\n' +
+    '.item .thumb { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 6px; overflow: hidden; background: var(--genmb-bg-3, #e2e8f0); display: flex; align-items: center; justify-content: center; font-size: 20px; line-height: 1; }\n' +
+    '.item .thumb img, .item .thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }\n' +
+    '.item .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }\n' +
+    '.item .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n' +
+    '.item .sub { font-size: 11px; opacity: .6; }\n' +
+    '.item .pct { font-variant-numeric: tabular-nums; opacity: .7; font-size: 12px; }\n' +
+    '.item .bar { width: 80px; height: 4px; background: var(--genmb-bg-3, #e2e8f0); border-radius: 999px; overflow: hidden; }\n' +
+    '.item .bar > span { display: block; height: 100%; background: var(--genmb-accent, #6366f1); transition: width .15s linear; }\n' +
+    '.item .act { flex: 0 0 auto; border: none; background: transparent; cursor: pointer; color: inherit; font-size: 14px; line-height: 1; padding: 4px 6px; border-radius: 6px; opacity: .65; }\n' +
+    '.item .act:hover { opacity: 1; background: var(--genmb-bg-3, #e2e8f0); }\n' +
+    '.item .act:focus-visible { opacity: 1; outline: 2px solid var(--genmb-accent, #6366f1); outline-offset: 1px; }\n' +
+    '.item.error { background: #fef2f2; color: #b91c1c; }\n' +
+    '.item.error .thumb { background: #fee2e2; }\n' +
+    '.item.done { background: #f0fdf4; }\n' +
+    '.sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }\n' +
+    ':host([theme=dark]), :host([theme=auto]) { --genmb-bg: #0f172a; --genmb-fg: #f1f5f9; --genmb-bg-2: #1e293b; --genmb-bg-3: #334155; --genmb-bg-hover: #1e293b; --genmb-border: #475569; }\n' +
+    '@media (prefers-color-scheme: dark) {\n' +
+    '  :host([theme=auto]) { --genmb-bg: #0f172a; --genmb-fg: #f1f5f9; --genmb-bg-2: #1e293b; --genmb-bg-3: #334155; --genmb-bg-hover: #1e293b; --genmb-border: #475569; }\n' +
+    '}\n'
+
+  function formatSize(b) {
+    if (b < 1024) return b + ' B'
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB'
+    if (b < 1024 * 1024 * 1024) return (b / 1024 / 1024).toFixed(1) + ' MB'
+    return (b / 1024 / 1024 / 1024).toFixed(2) + ' GB'
+  }
+
+  function isCoarsePointer() {
+    try {
+      return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)
+    } catch (e) { return false }
+  }
+
+  class GenMBUploader extends HTMLElement {
+    constructor() {
+      super()
+      this.attachShadow({ mode: 'open' })
+      this._items = []
+      this._revokers = []
+      this._planMaxSize = 0
+      this._annQueue = []
+      this._annTimer = null
+    }
+
+    static get observedAttributes() {
+      return ['accept', 'multiple', 'folder', 'max-size', 'theme', 'label', 'capture']
+    }
+
+    connectedCallback() {
+      this._render()
+      this._loadPlanLimit()
+    }
+
+    disconnectedCallback() {
+      for (var i = 0; i < this._revokers.length; i++) {
+        try { this._revokers[i]() } catch (e) { }
+      }
+      this._revokers = []
+      if (this._annTimer) { clearTimeout(this._annTimer); this._annTimer = null }
+      this._annQueue = []
+    }
+
+    attributeChangedCallback() {
+      if (this.shadowRoot && this.shadowRoot.firstChild) this._render()
+    }
+
+    _maxSize() {
+      if (this.hasAttribute('max-size')) {
+        return parseInt(this.getAttribute('max-size') || '52428800', 10)
+      }
+      if (this._planMaxSize) return this._planMaxSize
+      return Number.MAX_SAFE_INTEGER
+    }
+
+    _loadPlanLimit() {
+      if (this.hasAttribute('max-size') || this._planMaxSize) return
+      if (!window.genmb || !window.genmb.storage || !window.genmb.storage.getLimits) return
+      var self = this
+      window.genmb.storage.getLimits().then(function (limits) {
+        if (!limits || !limits.maxFileSize) return
+        self._planMaxSize = limits.maxFileSize
+        var hintEl = self.shadowRoot && self.shadowRoot.querySelector('.hint')
+        if (hintEl) hintEl.textContent = self._hintText()
+      }).catch(function () { })
+    }
+
+    _hintText() {
+      var multiple = this.hasAttribute('multiple')
+      var parts = []
+      if (this.hasAttribute('max-size') || this._planMaxSize) {
+        parts.push('Max ' + formatSize(this._maxSize()) + ' per file')
+      }
+      if (multiple) parts.push('multiple allowed')
+      return parts.join(' · ')
+    }
+
+    _render() {
+      var accept = this.getAttribute('accept') || '*/*'
+      var multiple = this.hasAttribute('multiple')
+      var defaultLabel = isCoarsePointer() ? 'Tap to add files' : 'Drop files here or click to upload'
+      var label = this.getAttribute('label') || defaultLabel
+      var capture = ''
+      if (this.hasAttribute('capture')) {
+        capture = ' capture="' + this._escape(this.getAttribute('capture') || 'environment') + '"'
+      }
+
+      this.shadowRoot.innerHTML =
+        '<style>' + CSS + '</style>' +
+        '<div class="dropzone" part="dropzone">' +
+          '<div class="icon" aria-hidden="true">⬆️</div>' +
+          '<p class="label">' + this._escape(label) + '</p>' +
+          '<p class="hint">' + this._escape(this._hintText()) + '</p>' +
+          '<input type="file" ' + (multiple ? 'multiple ' : '') + capture +
+            ' accept="' + this._escape(accept) + '" aria-label="' + this._escape(label) + '">' +
+        '</div>' +
+        '<div class="list" part="list"></div>' +
+        '<div class="summary" part="summary" aria-hidden="true"></div>' +
+        '<div class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>'
+
+      var dz = this.shadowRoot.querySelector('.dropzone')
+      var input = this.shadowRoot.querySelector('input[type=file]')
+      var self = this
+
+      dz.addEventListener('dragover', function (e) { e.preventDefault(); dz.classList.add('dragover') })
+      dz.addEventListener('dragleave', function () { dz.classList.remove('dragover') })
+      dz.addEventListener('drop', function (e) {
+        e.preventDefault()
+        dz.classList.remove('dragover')
+        self._handleFiles(e.dataTransfer.files)
+      })
+      input.addEventListener('change', function (e) { self._handleFiles(e.target.files) })
+    }
+
+    _escape(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      })
+    }
+
+    _setSummary(text) {
+      var el = this.shadowRoot && this.shadowRoot.querySelector('.summary')
+      if (el) el.textContent = text || ''
+    }
+
+    _announce(text) {
+      if (!text) return
+      this._annQueue.push(text)
+      if (this._annTimer) return
+      var self = this
+      var pump = function () {
+        var el = self.shadowRoot && self.shadowRoot.querySelector('.sr-only')
+        if (!el || !self._annQueue.length) { self._annTimer = null; return }
+        var msg = self._annQueue.shift()
+        el.textContent = ''
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(function () { el.textContent = msg })
+        } else {
+          el.textContent = msg
+        }
+        self._annTimer = setTimeout(pump, 1200)
+      }
+      pump()
+    }
+
+    _renderThumb(file) {
+      var thumb = document.createElement('div')
+      thumb.className = 'thumb'
+      var preview = null
+      if (window.genmb && window.genmb.storage && window.genmb.storage.previewFor) {
+        preview = window.genmb.storage.previewFor(file)
+      }
+      if (preview && preview.kind === 'image' && preview.url) {
+        var img = document.createElement('img')
+        img.src = preview.url
+        img.alt = ''
+        thumb.appendChild(img)
+      } else if (preview && preview.kind === 'video' && preview.url) {
+        var vid = document.createElement('video')
+        vid.src = preview.url
+        vid.muted = true
+        vid.playsInline = true
+        vid.preload = 'metadata'
+        thumb.appendChild(vid)
+      } else if (preview && preview.kind === 'pdf') {
+        thumb.textContent = '📄'
+      } else {
+        thumb.textContent = '📎'
+      }
+      return { el: thumb, revoke: preview ? preview.revoke : function () {} }
+    }
+
+    async _handleFiles(fileList) {
+      var files = Array.prototype.slice.call(fileList || [])
+      if (!files.length) return
+      var folder = this.getAttribute('folder') || undefined
+      var accept = this.getAttribute('accept') || '*/*'
+      var maxSize = this._maxSize()
+      var self = this
+
+      if (!window.genmb || !window.genmb.storage) {
+        files.forEach(function (file) {
+          var row = self._addRow(file, folder, accept, maxSize)
+          row.fail('SDK not loaded', 'upload', false)
+          self.dispatchEvent(new CustomEvent('genmb-upload-error', {
+            detail: { message: 'window.genmb.storage not available', file: file, reason: 'upload' },
+            bubbles: true, composed: true,
+          }))
+        })
+        return
+      }
+
+      var rows = files.map(function (file) {
+        return self._addRow(file, folder, accept, maxSize)
+      })
+
+      var total = rows.length
+      var completed = []
+      for (var i = 0; i < rows.length; i++) {
+        var idx = i
+        self._setSummary('Uploading ' + (idx + 1) + ' of ' + total + '…')
+        var asset = await rows[idx].run(function (p) {
+          var overall = Math.round(((idx * 100) + p) / total)
+          self._setSummary('Uploading ' + (idx + 1) + ' of ' + total + ' · ' + overall + '%')
+        })
+        if (asset) completed.push(asset)
+      }
+
+      var noun = total > 1 ? 'files' : 'file'
+      if (completed.length === total) {
+        self._setSummary('All ' + total + ' ' + noun + ' uploaded')
+        self._announce('All ' + total + ' ' + noun + ' uploaded')
+      } else if (completed.length) {
+        self._setSummary(completed.length + ' of ' + total + ' uploaded')
+        self._announce(completed.length + ' of ' + total + ' uploaded, ' + (total - completed.length) + ' failed')
+      } else {
+        self._setSummary('')
+        self._announce('Upload failed')
+      }
+
+      if (completed.length) {
+        self.dispatchEvent(new CustomEvent('genmb-upload-complete', {
+          detail: { files: completed },
+          bubbles: true, composed: true,
+        }))
+      }
+    }
+
+    _addRow(file, folder, accept, maxSize) {
+      var self = this
+      var listEl = this.shadowRoot.querySelector('.list')
+
+      var item = document.createElement('div')
+      item.className = 'item'
+
+      var thumb = this._renderThumb(file)
+      item.appendChild(thumb.el)
+      this._revokers.push(thumb.revoke)
+
+      var meta = document.createElement('div')
+      meta.className = 'meta'
+      var nameEl = document.createElement('span')
+      nameEl.className = 'name'
+      nameEl.textContent = file.name
+      var subEl = document.createElement('span')
+      subEl.className = 'sub'
+      subEl.textContent = formatSize(file.size)
+      meta.appendChild(nameEl)
+      meta.appendChild(subEl)
+      item.appendChild(meta)
+
+      var bar = document.createElement('span')
+      bar.className = 'bar'
+      bar.setAttribute('role', 'progressbar')
+      bar.setAttribute('aria-valuemin', '0')
+      bar.setAttribute('aria-valuemax', '100')
+      bar.setAttribute('aria-valuenow', '0')
+      bar.setAttribute('aria-label', 'Upload progress: ' + file.name)
+      bar.innerHTML = '<span style="width:0%"></span>'
+      var barFill = bar.querySelector('span')
+      item.appendChild(bar)
+
+      var pctEl = document.createElement('span')
+      pctEl.className = 'pct'
+      pctEl.textContent = '0%'
+      item.appendChild(pctEl)
+
+      var removeBtn = document.createElement('button')
+      removeBtn.className = 'act'
+      removeBtn.type = 'button'
+      removeBtn.title = 'Remove'
+      removeBtn.setAttribute('aria-label', 'Remove ' + file.name)
+      removeBtn.textContent = '×'
+      item.appendChild(removeBtn)
+
+      listEl.appendChild(item)
+
+      var settled = false
+      var resolveRun = null
+      var onTick = null
+
+      function remove() {
+        thumb.revoke()
+        var ri = self._revokers.indexOf(thumb.revoke)
+        if (ri !== -1) self._revokers.splice(ri, 1)
+        if (item.parentNode) item.parentNode.removeChild(item)
+        self.dispatchEvent(new CustomEvent('genmb-upload-removed', {
+          detail: { file: file },
+          bubbles: true, composed: true,
+        }))
+        if (!settled && resolveRun) { settled = true; resolveRun(null) }
+      }
+      removeBtn.addEventListener('click', remove)
+
+      function fail(message, reason, retryable) {
+        item.className = 'item error'
+        bar.style.display = 'none'
+        pctEl.textContent = (reason === 'type' || reason === 'size') ? 'rejected' : 'failed'
+        item.title = message
+        subEl.textContent = message
+        self._announce(file.name + ': ' + message)
+        if (retryable) {
+          var retryBtn = document.createElement('button')
+          retryBtn.className = 'act'
+          retryBtn.type = 'button'
+          retryBtn.title = 'Retry'
+          retryBtn.setAttribute('aria-label', 'Retry ' + file.name)
+          retryBtn.textContent = '↻'
+          retryBtn.addEventListener('click', function () {
+            item.removeChild(retryBtn)
+            item.className = 'item'
+            bar.style.display = ''
+            barFill.style.width = '0%'
+            bar.setAttribute('aria-valuenow', '0')
+            pctEl.textContent = '0%'
+            subEl.textContent = formatSize(file.size)
+            doUpload()
+          })
+          item.insertBefore(retryBtn, removeBtn)
+        }
+        self.dispatchEvent(new CustomEvent('genmb-upload-error', {
+          detail: { message: message, file: file, reason: reason },
+          bubbles: true, composed: true,
+        }))
+      }
+
+      function doUpload() {
+        return window.genmb.storage.upload(file, {
+          folder: folder,
+          onProgress: function (p) {
+            barFill.style.width = p + '%'
+            bar.setAttribute('aria-valuenow', String(p))
+            pctEl.textContent = p + '%'
+            if (onTick && !settled) { try { onTick(p) } catch (e) {} }
+            self.dispatchEvent(new CustomEvent('genmb-upload-progress', {
+              detail: { percent: p, file: file },
+              bubbles: true, composed: true,
+            }))
+          },
+        }).then(function (asset) {
+          item.className = 'item done'
+          bar.style.display = 'none'
+          pctEl.textContent = '✓'
+          self._announce(file.name + ' uploaded')
+          if (!settled && resolveRun) { settled = true; resolveRun(asset) }
+          return asset
+        }).catch(function (err) {
+          fail((err && err.message) || 'Upload failed', 'upload', true)
+          if (!settled && resolveRun) { settled = true; resolveRun(null) }
+          return null
+        })
+      }
+
+      return {
+        run: function (tick) {
+          onTick = tick || null
+          return new Promise(function (resolve) {
+            resolveRun = resolve
+            var v = window.genmb.storage.validate
+              ? window.genmb.storage.validate(file, { accept: accept, maxSize: maxSize })
+              : { ok: file.size <= maxSize, reason: 'size', message: 'File is too large' }
+            if (!v.ok) {
+              fail(v.message || 'File rejected', v.reason || 'type', false)
+              settled = true
+              resolve(null)
+              return
+            }
+            doUpload()
+          })
+        },
+        fail: fail,
+        remove: remove,
+      }
+    }
+  }
+
+  window.customElements.define('genmb-uploader', GenMBUploader)
+})()
+
+;(function () {
+  if (typeof window === 'undefined') return
+  if (window.customElements && window.customElements.get('genmb-image')) return
+
+  var CSS =
+    ':host { display: inline-block; position: relative; overflow: hidden; line-height: 0; }' +
+    ':host([fit=cover]) img { object-fit: cover; }' +
+    ':host([fit=contain]) img { object-fit: contain; }' +
+    '.ph { position: absolute; inset: 0; background-size: cover; background-position: center; transition: opacity .4s; }' +
+    'img { display: block; width: 100%; height: 100%; transition: opacity .25s; }' +
+    'img.loading { opacity: 0; }'
+
+  function decodeBlurhashToDataURL(hash, w, h) {
+    try {
+      var digit = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~'
+      function d83(str) { var v = 0; for (var i = 0; i < str.length; i++) { v = v * 83 + digit.indexOf(str[i]) } return v }
+      function srgb(v) { v = v / 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
+      function lsrgb(v) { v = Math.max(0, Math.min(1, v)); return v <= 0.0031308 ? Math.round(v * 12.92 * 255 + 0.5) : Math.round((1.055 * Math.pow(v, 1 / 2.4) - 0.055) * 255 + 0.5) }
+      function sign(n) { return n < 0 ? -1 : 1 }
+      function signPow(v, e) { return sign(v) * Math.pow(Math.abs(v), e) }
+      if (!hash || hash.length < 6) return null
+      var sizeFlag = d83(hash[0])
+      var numY = Math.floor(sizeFlag / 9) + 1
+      var numX = (sizeFlag % 9) + 1
+      var quant = d83(hash[1])
+      var maxVal = (quant + 1) / 166
+      var colors = new Array(numX * numY)
+      for (var i = 0; i < colors.length; i++) {
+        if (i === 0) {
+          var v = d83(hash.substring(2, 6))
+          colors[0] = [srgb(v >> 16), srgb((v >> 8) & 255), srgb(v & 255)]
+        } else {
+          var vv = d83(hash.substring(4 + i * 2, 6 + i * 2))
+          var r = Math.floor(vv / (19 * 19)), g = Math.floor(vv / 19) % 19, b = vv % 19
+          colors[i] = [signPow((r - 9) / 9, 2.0) * maxVal, signPow((g - 9) / 9, 2.0) * maxVal, signPow((b - 9) / 9, 2.0) * maxVal]
+        }
+      }
+      var cw = Math.min(w || 32, 64), ch = Math.min(h || 32, 64)
+      var canvas = document.createElement('canvas')
+      canvas.width = cw; canvas.height = ch
+      var ctx = canvas.getContext('2d')
+      var imgData = ctx.createImageData(cw, ch)
+      var data = imgData.data
+      for (var y = 0; y < ch; y++) {
+        for (var x = 0; x < cw; x++) {
+          var rr = 0, gg = 0, bb = 0
+          for (var j = 0; j < numY; j++) {
+            for (var ii = 0; ii < numX; ii++) {
+              var basis = Math.cos((Math.PI * x * ii) / cw) * Math.cos((Math.PI * y * j) / ch)
+              var c = colors[ii + j * numX]
+              rr += c[0] * basis; gg += c[1] * basis; bb += c[2] * basis
+            }
+          }
+          var off = 4 * (x + y * cw)
+          data[off] = lsrgb(rr); data[off + 1] = lsrgb(gg); data[off + 2] = lsrgb(bb); data[off + 3] = 255
+        }
+      }
+      ctx.putImageData(imgData, 0, 0)
+      return canvas.toDataURL('image/jpeg', 0.7)
+    } catch (e) {
+      return null
+    }
+  }
+
+  class GenMBImage extends HTMLElement {
+    constructor() {
+      super()
+      this.attachShadow({ mode: 'open' })
+      this._metaFetched = false
+    }
+
+    static get observedAttributes() {
+      return ['src', 'width', 'height', 'alt', 'loading', 'fit']
+    }
+
+    connectedCallback() { this._render() }
+    attributeChangedCallback() { if (this.shadowRoot.firstChild) this._render() }
+
+    async _render() {
+      var src = this.getAttribute('src') || ''
+      var width = this.getAttribute('width')
+      var height = this.getAttribute('height')
+      var alt = this.getAttribute('alt') || ''
+      var loading = this.getAttribute('loading') || 'lazy'
+
+      if (width) this.style.width = width + (String(width).match(/\D/) ? '' : 'px')
+      if (height) this.style.height = height + (String(height).match(/\D/) ? '' : 'px')
+
+      this.shadowRoot.innerHTML =
+        '<style>' + CSS + '</style>' +
+        '<div class="ph"></div>' +
+        '<img class="loading" src="' + this._escape(src) + '" alt="' + this._escape(alt) + '" loading="' + this._escape(loading) + '" decoding="async" />'
+
+      var img = this.shadowRoot.querySelector('img')
+      var ph = this.shadowRoot.querySelector('.ph')
+
+      if (!this._metaFetched && src) {
+        this._metaFetched = true
+        this._fetchMeta(src).then(function (meta) {
+          if (!meta) return
+          if (meta.alt && !alt) img.alt = meta.alt
+          if (meta.blurhash) {
+            var dataUrl = decodeBlurhashToDataURL(meta.blurhash, 32, 32)
+            if (dataUrl) ph.style.backgroundImage = 'url(' + dataUrl + ')'
+          } else if (meta.dominantColor) {
+            ph.style.background = meta.dominantColor
+          }
+        }).catch(function () {})
+      }
+
+      img.addEventListener('load', function () { img.classList.remove('loading'); ph.style.opacity = '0' })
+      img.addEventListener('error', function () { ph.style.opacity = '0' })
+    }
+
+    async _fetchMeta(src) {
+      try {
+        var metaUrl = src.replace(/(\.[a-zA-Z0-9]+)$/, '.meta.json')
+        var r = await fetch(metaUrl, { method: 'GET' })
+        if (!r.ok) return null
+        return await r.json()
+      } catch (e) { return null }
+    }
+
+    _escape(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      })
+    }
+  }
+
+  window.customElements.define('genmb-image', GenMBImage)
+})()
+
+;(function () {
+  if (typeof window === 'undefined') return
+  if (window.customElements && window.customElements.get('genmb-video')) return
+
+  var CSS =
+    ':host { display: block; position: relative; width: 100%; background: #000; }' +
+    'video { display: block; width: 100%; height: 100%; }' +
+    '.badge { position: absolute; top: 8px; right: 8px; padding: 2px 6px; border-radius: 4px; background: rgba(0,0,0,.6); color: #fff; font: 500 11px system-ui; pointer-events: none; opacity: 0; transition: opacity .2s; }' +
+    '.badge.show { opacity: 1; }' +
+    '.chapters { display: none; }' +
+    ':host([chapters]) .chapters { display: flex; gap: 4px; padding: 6px 4px; flex-wrap: wrap; background: #0a0a0a; }' +
+    '.chapter { padding: 4px 8px; font: 500 11px system-ui; color: #d4d4d8; background: #18181b; border: 1px solid #27272a; border-radius: 999px; cursor: pointer; }' +
+    '.chapter:hover { background: #27272a; }'
+
+  function loadHls() {
+    if (window.Hls) return Promise.resolve(window.Hls)
+    if (loadHls._p) return loadHls._p
+    loadHls._p = new Promise(function (resolve, reject) {
+      var s = document.createElement('script')
+      s.src = (window.GENMB_HLS_URL || 'https://cdn.jsdelivr.net/npm/hls.js@1.5/dist/hls.min.js')
+      s.async = true
+      s.onload = function () { resolve(window.Hls) }
+      s.onerror = function () { reject(new Error('Failed to load hls.js')) }
+      document.head.appendChild(s)
+    })
+    return loadHls._p
+  }
+
+  function deriveMediaPaths(src) {
+    try {
+      var u = new URL(src, window.location.origin)
+      var parts = u.pathname.split('/')
+      var fileIdx = parts.lastIndexOf('files')
+      var assetIdx = parts.lastIndexOf('assets')
+      var anchor = fileIdx >= 0 ? fileIdx : (assetIdx >= 0 ? assetIdx : -1)
+      if (anchor < 0) return null
+      var filename = decodeURIComponent(parts.slice(anchor + 1).join('/'))
+      var stem = filename.replace(/\.[^.]+$/, '')
+      var dirPath = parts.slice(0, anchor).join('/')
+      return {
+        appId: parts[parts.lastIndexOf('storage') + 1] || null,
+        filename: filename,
+        masterUrl: u.origin + dirPath + '/media/' + encodeURIComponent(stem) + '/master.m3u8',
+        posterUrl: u.origin + dirPath + '/media/' + encodeURIComponent(stem) + '/thumbnail.jpg',
+        captionsUrl: u.origin + dirPath + '/media/' + encodeURIComponent(stem) + '/captions.en.vtt',
+      }
+    } catch (e) { return null }
+  }
+
+  function track(name, meta) {
+    try {
+      if (typeof window.genmb !== 'undefined' && window.genmb && window.genmb.track) {
+        window.genmb.track(name, meta || {})
+      }
+    } catch (e) {}
+  }
+
+  class GenMBVideo extends HTMLElement {
+    constructor() {
+      super()
+      this.attachShadow({ mode: 'open' })
+      this._upgraded = false
+    }
+
+    static get observedAttributes() { return ['src', 'poster', 'controls', 'autoplay', 'muted', 'loop'] }
+
+    connectedCallback() {
+      this._render()
+      this._maybePollStatus()
+    }
+    disconnectedCallback() {
+      if (this._es) { try { this._es.close() } catch (e) {} }
+      if (this._hls) { try { this._hls.destroy() } catch (e) {} }
+    }
+    attributeChangedCallback() { if (this.shadowRoot.firstChild) this._render() }
+
+    _render() {
+      var src = this.getAttribute('src') || ''
+      var poster = this.getAttribute('poster') || ''
+      var paths = deriveMediaPaths(src)
+      if (!poster && paths) poster = paths.posterUrl
+
+      var attrs = ''
+      if (this.hasAttribute('controls')) attrs += ' controls'
+      if (this.hasAttribute('autoplay')) attrs += ' autoplay'
+      if (this.hasAttribute('muted')) attrs += ' muted'
+      if (this.hasAttribute('loop')) attrs += ' loop'
+      attrs += ' playsinline'
+
+      this.shadowRoot.innerHTML =
+        '<style>' + CSS + '</style>' +
+        '<video' + attrs + ' poster="' + this._escape(poster) + '"></video>' +
+        '<span class="badge"></span>' +
+        '<div class="chapters" part="chapters"></div>'
+
+      var video = this.shadowRoot.querySelector('video')
+      var sourceEl = document.createElement('source')
+      sourceEl.src = src
+      video.appendChild(sourceEl)
+
+      video.addEventListener('play', function () { track('widget_video_played', { src: src }) }, { once: true })
+
+      this._video = video
+      this._paths = paths
+      this._badge = this.shadowRoot.querySelector('.badge')
+    }
+
+    _maybePollStatus() {
+      var src = this.getAttribute('src') || ''
+      var paths = this._paths
+      if (!paths) return
+
+      var self = this
+      fetch(paths.masterUrl, { method: 'HEAD' }).then(function (res) {
+        if (res.ok) self._upgradeToHls(paths.masterUrl)
+      }).catch(function () {})
+
+      try {
+        var appId = paths.appId
+        if (!appId) return
+        var esUrl = window.location.origin + '/api/storage/' + appId + '/media-events'
+        var es = new EventSource(esUrl, { withCredentials: false })
+        this._es = es
+        es.addEventListener('done', function () {
+          fetch(paths.masterUrl, { method: 'HEAD' }).then(function (res) {
+            if (res.ok) self._upgradeToHls(paths.masterUrl)
+          })
+        })
+        es.onerror = function () { }
+      } catch (e) {}
+    }
+
+    _upgradeToHls(masterUrl) {
+      if (this._upgraded) return
+      this._upgraded = true
+      var video = this._video
+      var badge = this._badge
+
+      var wasPlaying = !video.paused && !video.ended
+      var currentTime = video.currentTime || 0
+
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = masterUrl
+        video.addEventListener('loadedmetadata', function () {
+          video.currentTime = currentTime
+          if (wasPlaying) video.play().catch(function () {})
+        }, { once: true })
+        badge.textContent = 'Optimized'
+        badge.classList.add('show')
+        setTimeout(function () { badge.classList.remove('show') }, 2500)
+        return
+      }
+
+      var self = this
+      loadHls().then(function (Hls) {
+        if (Hls && Hls.isSupported && Hls.isSupported()) {
+          var hls = new Hls()
+          self._hls = hls
+          hls.loadSource(masterUrl)
+          hls.attachMedia(video)
+          hls.on(Hls.Events.MANIFEST_PARSED, function () {
+            video.currentTime = currentTime
+            if (wasPlaying) video.play().catch(function () {})
+            badge.textContent = 'Optimized'
+            badge.classList.add('show')
+            setTimeout(function () { badge.classList.remove('show') }, 2500)
+          })
+        }
+      }).catch(function () {
+      })
+
+      if (this.hasAttribute('captions') && this._paths) {
+        var trackEl = document.createElement('track')
+        trackEl.kind = 'subtitles'
+        trackEl.label = 'English'
+        trackEl.srclang = 'en'
+        trackEl.src = this._paths.captionsUrl
+        trackEl.default = true
+        video.appendChild(trackEl)
+      }
+    }
+
+    _escape(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      })
+    }
+  }
+
+  window.customElements.define('genmb-video', GenMBVideo)
+})()
+
+;(function () {
+  if (typeof window === 'undefined') return
+  if (window.customElements && window.customElements.get('genmb-pdf')) return
+
+  var CSS =
+    ':host { display: block; width: 100%; height: 100%; min-height: 480px; background: #1a1a1a; }' +
+    'object, iframe { width: 100%; height: 100%; border: 0; }'
+
+  function track(name, meta) {
+    try {
+      if (typeof window.genmb !== 'undefined' && window.genmb && window.genmb.track) {
+        window.genmb.track(name, meta || {})
+      }
+    } catch (e) {}
+  }
+
+  class GenMBPdf extends HTMLElement {
+    constructor() {
+      super()
+      this.attachShadow({ mode: 'open' })
+    }
+    static get observedAttributes() { return ['src', 'height', 'highlight'] }
+    connectedCallback() { this._render() }
+    attributeChangedCallback() { if (this.shadowRoot.firstChild) this._render() }
+
+    _render() {
+      var src = this.getAttribute('src') || ''
+      var height = this.getAttribute('height') || '600'
+      var fragment = this.getAttribute('highlight') ? '#' + this.getAttribute('highlight') : ''
+
+      this.shadowRoot.innerHTML =
+        '<style>' + CSS + ':host { height: ' + height + 'px; }</style>' +
+        '<object type="application/pdf" data="' + this._escape(src + fragment) + '">' +
+        '<iframe src="' + this._escape(src + fragment) + '" title="PDF document"></iframe>' +
+        '</object>'
+
+      track('widget_pdf_opened', { src: src })
+    }
+
+    _escape(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      })
+    }
+  }
+
+  window.customElements.define('genmb-pdf', GenMBPdf)
+})()
+
+;(function () {
+  if (typeof window === 'undefined') return
+  if (window.customElements && window.customElements.get('genmb-audio')) return
+
+  var CSS =
+    ':host { display: block; width: 100%; font-family: system-ui, sans-serif; }' +
+    'audio { width: 100%; display: block; }' +
+    '.waveform { height: 40px; background: linear-gradient(180deg, transparent, rgba(99,102,241,.15)); position: relative; overflow: hidden; border-radius: 4px; margin-top: 4px; }' +
+    '.transcript { max-height: 200px; overflow-y: auto; padding: 8px; background: #f8fafc; border-radius: 4px; margin-top: 4px; font-size: 13px; color: #0f172a; }' +
+    '.transcript .seg { padding: 2px 4px; cursor: pointer; border-radius: 2px; }' +
+    '.transcript .seg:hover { background: #eef2ff; }'
+
+  function deriveMediaPaths(src) {
+    try {
+      var u = new URL(src, window.location.origin)
+      var parts = u.pathname.split('/')
+      var anchor = parts.lastIndexOf('files')
+      if (anchor < 0) anchor = parts.lastIndexOf('assets')
+      if (anchor < 0) return null
+      var filename = decodeURIComponent(parts.slice(anchor + 1).join('/'))
+      var stem = filename.replace(/\.[^.]+$/, '')
+      var dirPath = parts.slice(0, anchor).join('/')
+      return {
+        waveformUrl: u.origin + dirPath + '/media/' + encodeURIComponent(stem) + '/waveform.json',
+        transcriptUrl: u.origin + dirPath + '/media/' + encodeURIComponent(stem) + '/transcript.json',
+      }
+    } catch (e) { return null }
+  }
+
+  class GenMBAudio extends HTMLElement {
+    constructor() {
+      super()
+      this.attachShadow({ mode: 'open' })
+    }
+    static get observedAttributes() { return ['src', 'controls'] }
+    connectedCallback() { this._render() }
+    attributeChangedCallback() { if (this.shadowRoot.firstChild) this._render() }
+
+    _render() {
+      var src = this.getAttribute('src') || ''
+      var showWave = this.hasAttribute('waveform')
+      var showTr = this.hasAttribute('transcript')
+
+      this.shadowRoot.innerHTML =
+        '<style>' + CSS + '</style>' +
+        '<audio controls src="' + this._escape(src) + '"></audio>' +
+        (showWave ? '<canvas class="waveform" width="800" height="40"></canvas>' : '') +
+        (showTr ? '<div class="transcript">Loading transcript...</div>' : '')
+
+      var audio = this.shadowRoot.querySelector('audio')
+      var paths = deriveMediaPaths(src)
+      var self = this
+
+      if (showWave && paths) {
+        fetch(paths.waveformUrl).then(function (r) { return r.ok ? r.json() : null }).then(function (wf) {
+          if (!wf) return
+          self._drawWaveform(wf)
+        }).catch(function () {})
+      }
+
+      if (showTr && paths) {
+        fetch(paths.transcriptUrl).then(function (r) { return r.ok ? r.json() : null }).then(function (tr) {
+          var holder = self.shadowRoot.querySelector('.transcript')
+          if (!holder) return
+          if (!tr || !tr.segments) { holder.textContent = 'Transcript not yet available.'; return }
+          holder.innerHTML = ''
+          tr.segments.forEach(function (seg) {
+            var span = document.createElement('span')
+            span.className = 'seg'
+            span.textContent = seg.text + ' '
+            span.title = seg.start + 's'
+            span.addEventListener('click', function () { audio.currentTime = seg.start; audio.play().catch(function () {}) })
+            holder.appendChild(span)
+          })
+        }).catch(function () {})
+      }
+    }
+
+    _drawWaveform(wf) {
+      var canvas = this.shadowRoot.querySelector('.waveform')
+      if (!canvas) return
+      var ctx = canvas.getContext('2d')
+      var data = (wf && wf.data) || []
+      if (data.length === 0) return
+      var w = canvas.width, h = canvas.height
+      ctx.clearRect(0, 0, w, h)
+      ctx.fillStyle = '#6366f1'
+      var step = Math.max(1, Math.floor(data.length / w))
+      for (var i = 0; i < w; i++) {
+        var sample = Math.abs(data[i * step] || 0) / 128
+        var barH = Math.max(2, sample * h)
+        ctx.fillRect(i, (h - barH) / 2, 1, barH)
+      }
+    }
+
+    _escape(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      })
+    }
+  }
+
+  window.customElements.define('genmb-audio', GenMBAudio)
+})()
+
+})();
+</script>
+    <script>
+// GenMB image-ai SDK (Capability)
+(function() {
+class GenMBAI {
+  constructor(config) {
+    if (!config || !config.appId) {
+      throw new Error('GenMBAI: appId is required')
+    }
+    this.appId = config.appId
+    this.baseUrl = (config.baseUrl || '').replace(/\/$/, '')
+  }
+
+  async complete(promptOrOptions, options = {}) {
+    const isObject = promptOrOptions && typeof promptOrOptions === 'object'
+    const opts = isObject ? promptOrOptions : (options || {})
+    const raw = isObject ? opts.prompt : promptOrOptions
+
+    if (!raw || typeof raw !== 'string' || !raw.trim()) {
+      throw new Error('Prompt is required')
+    }
+
+    const body = {
+      prompt: this._clampPrompt(raw),
+      appId: this.appId,
+      maxTokens: opts.maxTokens || 500
+    }
+    if (opts.enableSearch) body.enableSearch = true
+
+    return this._request(`${this.baseUrl}/api/ai/completion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+  }
+
+  async analyzeImage(file, prompt = 'Describe this image', options = {}) {
+    if (!file) {
+      throw new Error('Image file is required')
+    }
+    if (typeof file.size === 'number' && file.size > 10 * 1024 * 1024) {
+      const err = new Error('Image too large (max 10MB)')
+      err.code = 'IMAGE_TOO_LARGE'
+      throw err
+    }
+
+    const formData = new FormData()
+    formData.append('image', file)
+    formData.append('prompt', this._clampPrompt(prompt || 'Describe this image'))
+    formData.append('appId', this.appId)
+    if (options.maxTokens) formData.append('maxTokens', String(options.maxTokens))
+
+    return this._request(`${this.baseUrl}/api/ai/completion/image`, {
+      method: 'POST',
+      body: formData
+    })
+  }
+
+  _clampPrompt(prompt) {
+    const MAX_PROMPT_CHARS = 16000
+    if (prompt.length <= MAX_PROMPT_CHARS) return prompt
+    try { console.warn(`[genmb.ai] prompt exceeded ${MAX_PROMPT_CHARS} chars; truncated to fit.`) } catch (e) {}
+    return prompt.slice(0, MAX_PROMPT_CHARS)
+  }
+
+  async _request(url, init) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 60000)
+
+    let res
+    try {
+      res = await fetch(url, Object.assign({}, init, { signal: controller.signal }))
+    } catch (err) {
+      clearTimeout(timer)
+      if (err.name === 'AbortError') throw new Error('Request timed out')
+      throw err
+    }
+    clearTimeout(timer)
+
+    if (!res.ok) {
+      if (res.status === 429) {
+        const err = new Error('Rate limit exceeded (100 requests/hour)')
+        err.code = 'RATE_LIMITED'
+        throw err
+      }
+      throw new Error('Request failed')
+    }
+
+    const json = await res.json()
+    if (json && json.success === false) {
+      const err = new Error(json.error || 'AI request failed')
+      err.code = json.error_code || 'AI_ERROR'
+      throw err
+    }
+    return (json && json.data && json.data.text) || ''
+  }
+}
+
+
+// Auto-initialize
+window.genmb = window.genmb || {};
+const config = {
+  "appId": "yA5ttgjUkVzs"
+};
+window.genmb.ai = new GenMBAI(config);
+})();
+</script>
+    <script>
+// GenMB rbac SDK (Capability)
+(function() {
+class GenMBRBAC {
+  constructor({ appId }) {
+    if (!appId) {
+      throw new Error('GenMBRBAC: appId is required')
+    }
+
+    this.appId = appId
+    this._role = null
+    this._permissions = []
+    this._listeners = []
+    this._ready = false
+    this._readyPromise = null
+    this._roleLoader = null
+    this._unsubscribeAuth = null
+  }
+
+  setRoleLoader(loader) {
+    this._roleLoader = loader
+  }
+
+  async ready() {
+    if (this._ready) return this
+    if (this._readyPromise) return this._readyPromise
+
+    this._readyPromise = (async () => {
+      try {
+        if (window.genmb && window.genmb.auth) {
+          await window.genmb.auth.ready()
+
+          this._unsubscribeAuth = window.genmb.auth.onAuthStateChange(async (user) => {
+            if (user && this._roleLoader) {
+              await this._loadRole(user)
+            } else {
+              this._role = null
+              this._permissions = []
+              this._notifyListeners()
+            }
+          })
+        }
+      } catch (err) {
+        console.error('GenMBRBAC: Error during initialization:', err)
+      }
+
+      this._ready = true
+      return this
+    })()
+
+    return this._readyPromise
+  }
+
+  async _loadRole(user) {
+    try {
+      const result = await this._roleLoader(user)
+      if (result && result.role) {
+        this._role = result.role
+        this._permissions = result.permissions || []
+        this._notifyListeners()
+      }
+    } catch (err) {
+      console.error('GenMBRBAC: Error loading role:', err)
+    }
+  }
+
+  setRole(role, permissions) {
+    if (typeof role !== 'string') {
+      console.error('GenMBRBAC: role must be a string')
+      return
+    }
+    this._role = role
+    this._permissions = Array.isArray(permissions) ? permissions : []
+    this._notifyListeners()
+  }
+
+  clearRole() {
+    this._role = null
+    this._permissions = []
+    this._notifyListeners()
+  }
+
+  getRole() {
+    return this._role
+  }
+
+  getRolePermissions() {
+    return this._permissions.slice()
+  }
+
+  hasRole(role) {
+    return this._role === role
+  }
+
+  hasPermission(permission) {
+    return this._permissions.includes('*') || this._permissions.includes(permission)
+  }
+
+  isAdmin() {
+    return this._role === 'admin'
+  }
+
+  requireRole(role) {
+    if (this._role !== role) {
+      throw new Error('Access denied: requires role "' + role + '"')
+    }
+  }
+
+  requirePermission(permission) {
+    if (!this.hasPermission(permission)) {
+      throw new Error('Access denied: requires permission "' + permission + '"')
+    }
+  }
+
+  onRoleChange(callback) {
+    this._listeners.push(callback)
+    callback(this._role, this._permissions)
+    return () => {
+      this._listeners = this._listeners.filter(l => l !== callback)
+    }
+  }
+
+  _notifyListeners() {
+    this._listeners.forEach(listener => {
+      try {
+        listener(this._role, this._permissions)
+      } catch (err) {
+        console.error('GenMBRBAC: Error in role change listener:', err)
+      }
+    })
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.GenMBRBAC = GenMBRBAC;
+}
+
+
+// Auto-initialize
+window.genmb = window.genmb || {};
+const config = {
+  "appId": "yA5ttgjUkVzs"
+};
+window.genmb.rbac = new GenMBRBAC(config);
+})();
+</script>
+    <script>
+// GenMB audit-log SDK (Capability)
+(function() {
+class GenMBAudit {
+  constructor({ appId, baseUrl } = {}) {
+    if (!appId) throw new Error('GenMBAudit: appId is required')
+    this.appId = appId
+    this.baseUrl = ((baseUrl || '/api/audit').replace(/\/$/, '')) + '/' + appId
+  }
+
+  async ready() { return this }
+
+  async log(action, entityType, entityId, meta) {
+    if (!action) throw new Error('audit.log requires action')
+    return this._json('POST', '/log', {
+      action,
+      entityType: entityType || null,
+      entityId: entityId || null,
+      meta: meta || null,
+    })
+  }
+
+  async list({ entityType, entityId, action, userId, limit, before } = {}) {
+    const params = []
+    if (entityType) params.push('entityType=' + encodeURIComponent(entityType))
+    if (entityId) params.push('entityId=' + encodeURIComponent(entityId))
+    if (action) params.push('action=' + encodeURIComponent(action))
+    if (userId) params.push('userId=' + encodeURIComponent(userId))
+    if (limit) params.push('limit=' + limit)
+    if (before) params.push('before=' + encodeURIComponent(before))
+    const qs = params.length ? '?' + params.join('&') : ''
+    return this._json('GET', '/list' + qs)
+  }
+
+  async _json(method, path, body) {
+    const init = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'include' }
+    if (body !== undefined) init.body = JSON.stringify(body)
+    const res = await fetch(this.baseUrl + path, init)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      const e = new Error(err.error || `audit ${path} failed (${res.status})`)
+      e.code = err.code || `HTTP_${res.status}`
+      e.status = res.status
+      throw e
+    }
+    const json = await res.json()
+    return json.data !== undefined ? json.data : json
+  }
+}
+
+window.GenMBAudit = GenMBAudit
+
+
+// Auto-initialize
+window.genmb = window.genmb || {};
+const config = {
+  "appId": "yA5ttgjUkVzs",
+  "baseUrl": "/api/audit"
+};
+window.genmb.audit = new GenMBAudit(config);
+window.genmb.audit.ready();
+})();
+</script>
+    <!-- GenMB Capabilities END -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
