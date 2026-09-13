@@ -1,0 +1,6 @@
+{
+  "language.interface": "Langue de l’interface",
+  "language.ai": "Langue de réponse de l’IA",
+  "language.help": "Choisissez la langue de l’interface ORION. La langue des réponses de l’IA se règle séparément dans les paramètres.",
+  "settings.language": "Langue et communication"
+}
