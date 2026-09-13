@@ -1,0 +1,6 @@
+{
+  "language.interface": "Oberflächensprache",
+  "language.ai": "KI-Antwortsprache",
+  "language.help": "Wählen Sie die Sprache der ORION-Oberfläche. Die KI-Antwortsprache wird separat in den Einstellungen festgelegt.",
+  "settings.language": "Sprache und Kommunikation"
+}
