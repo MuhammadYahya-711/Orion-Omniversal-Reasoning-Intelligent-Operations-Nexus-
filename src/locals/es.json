@@ -1,0 +1,6 @@
+{
+  "language.interface": "Idioma de la interfaz",
+  "language.ai": "Idioma de respuesta de IA",
+  "language.help": "Elige cómo ORION etiqueta el espacio de trabajo. El idioma de respuesta de IA se configura por separado en Ajustes.",
+  "settings.language": "Idioma y comunicación"
+}
