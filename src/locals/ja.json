@@ -1,0 +1,6 @@
+{
+  "language.interface": "表示言語",
+  "language.ai": "AI の応答言語",
+  "language.help": "ORION の表示言語を選択します。AI の応答言語は設定で個別に選択できます。",
+  "settings.language": "言語とコミュニケーション"
+}
